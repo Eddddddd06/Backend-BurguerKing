@@ -1,11 +1,13 @@
 """
-Lambda: Crear_Usuario
-Ruta:   POST /usuarios/registro
+Lambda: Seed_Usuarios  *** ENDPOINT TEMPORAL - SOLO PARA INICIALIZACIÓN ***
+Ruta:   POST /admin/seed-usuarios
 Módulo: auth/
 
-Registra un nuevo usuario con rol "cliente".
-Entrada (Body): nombre, email, password, direccion, departamento
-Salida:         mensaje, usuario_id
+Crea usuarios internos con rol 'admin' o 'empleado' directamente en la BD.
+No requiere autenticación. ELIMINAR o proteger en producción real.
+
+Entrada (Body): email, password, rol ("admin" | "empleado")
+Salida:         mensaje, usuario_id, email, rol
 """
 
 import uuid
@@ -17,6 +19,7 @@ from utils import dynamodb, TABLA_USUARIOS, respuesta, obtener_body
 
 
 _SALT = os.environ.get("HASH_SALT", "bk-secret-salt-2024")
+_ROLES_PERMITIDOS = {"admin", "empleado"}
 
 
 def _hashear_password(password: str) -> str:
@@ -26,19 +29,22 @@ def _hashear_password(password: str) -> str:
 
 
 def handler(event, context):
-    """Handler principal de la Lambda Crear_Usuario."""
+    """Handler del endpoint temporal de seed de usuarios."""
     try:
         body = obtener_body(event)
 
-        nombre = body.get("nombre", "").strip()
         email = body.get("email", "").strip()
         password = body.get("password", "")
-        direccion = body.get("direccion", "").strip()
-        departamento = body.get("departamento", "").strip()
+        rol = body.get("rol", "").strip().lower()
 
-        if not all([nombre, email, password, direccion, departamento]):
+        if not email or not password or not rol:
             return respuesta(400, {
-                "mensaje": "Los campos 'nombre', 'email', 'password', 'direccion' y 'departamento' son obligatorios."
+                "mensaje": "Los campos 'email', 'password' y 'rol' son obligatorios."
+            })
+
+        if rol not in _ROLES_PERMITIDOS:
+            return respuesta(400, {
+                "mensaje": f"El campo 'rol' debe ser 'admin' o 'empleado'."
             })
 
         tabla = dynamodb.Table(TABLA_USUARIOS)
@@ -58,20 +64,20 @@ def handler(event, context):
 
         tabla.put_item(Item={
             "usuario_id": usuario_id,
-            "nombre": nombre,
             "email": email,
             "password_hash": password_hash,
-            "direccion": direccion,
-            "departamento": departamento,
-            "rol": "cliente",
+            "rol": rol,
+            "nombre": f"Usuario {rol.capitalize()}",
             "tarjeta_guardada": None,
         })
 
         return respuesta(201, {
-            "mensaje": "Usuario registrado exitosamente.",
+            "mensaje": f"Usuario '{rol}' creado exitosamente.",
             "usuario_id": usuario_id,
+            "email": email,
+            "rol": rol,
         })
 
     except Exception as e:
-        print(f"[ERROR] Crear_Usuario: {e}")
+        print(f"[ERROR] Seed_Usuarios: {e}")
         return respuesta(500, {"mensaje": "Error interno del servidor."})
