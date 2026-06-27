@@ -188,7 +188,7 @@ def _handler_rappi(event, body):
         "pedido_id": pedido_id,
         "usuario_id": f"rappi_{cliente_nombre}",
         "codigo_pedido_ext": codigo_pedido_ext,
-        "items": items,
+        "items": json.loads(json.dumps(items), parse_float=Decimal),
         "total": Decimal(str(total_pagado)),
         "estado": "PAGADO_EXTERNO",
         "origen": origen,
