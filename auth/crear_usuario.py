@@ -45,8 +45,7 @@ def handler(event, context):
 
         scan = tabla.scan(
             FilterExpression="email = :e",
-            ExpressionAttributeValues={":e": email},
-            Limit=1,
+            ExpressionAttributeValues={":e": email}
         )
         if scan.get("Items"):
             return respuesta(409, {

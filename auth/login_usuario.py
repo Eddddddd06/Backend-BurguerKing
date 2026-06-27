@@ -46,8 +46,7 @@ def handler(event, context):
 
         scan = tabla_usuarios.scan(
             FilterExpression="email = :e",
-            ExpressionAttributeValues={":e": email},
-            Limit=1,
+            ExpressionAttributeValues={":e": email}
         )
         items = scan.get("Items", [])
         if not items:
