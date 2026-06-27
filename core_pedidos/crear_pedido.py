@@ -169,7 +169,6 @@ def _handler_web(event, body):
 
 def _handler_rappi(event, body):
     """Lógica para POST /pedidos/rappi — Pedidos desde plataforma Rappi."""
-
     origen = body.get("origen", "").strip()
     codigo_pedido_ext = body.get("codigo_pedido_ext", "").strip()
     cliente_nombre = body.get("cliente_nombre", "").strip()
@@ -187,8 +186,8 @@ def _handler_rappi(event, body):
     items_detalle = json.loads(json.dumps(items), parse_float=Decimal)
     try:
         _, items_detalle = _calcular_total(items)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR calcular_total rappi] {e}")
 
     tabla_pedidos.put_item(Item={
         "pedido_id": pedido_id,
