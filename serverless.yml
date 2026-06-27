@@ -1,0 +1,408 @@
+service: burger-king-backend
+
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: python3.9
+  stage: ${opt:stage, 'dev'}
+  region: us-east-1
+  # =========================================================================
+  # AWS Academy Learner Lab: Usar el rol existente LabRole
+  # =========================================================================
+  iam:
+    role: arn:aws:iam::${aws:accountId}:role/LabRole
+  environment:
+    STAGE: ${self:provider.stage}
+    TABLA_USUARIOS: t_usuarios
+    TABLA_TOKENS: t_tokens_acceso
+    TABLA_PRODUCTOS: t_productos
+    TABLA_FAVORITOS: t_favoritos
+    TABLA_PEDIDOS: t_pedidos
+    TABLA_STEP_TOKENS: t_step_tokens
+    S3_BUCKET: burger-king-menu-bucket-${self:provider.stage}
+    STATE_MACHINE_ARN: !Ref PedidoStateMachine
+    EVENT_BUS_NAME: default
+  apiGateway:
+    apiKeys:
+      - rappi-api-key-${self:provider.stage}
+    usagePlan:
+      quota:
+        limit: 5000
+        period: MONTH
+      throttle:
+        burstLimit: 20
+        rateLimit: 10
+
+# ===========================================================================
+# FUNCIONES LAMBDA
+# ===========================================================================
+functions:
+  # -------------------------------------------------------------------------
+  # MÓDULO 1: IDENTIDAD Y SEGURIDAD (auth/)
+  # -------------------------------------------------------------------------
+  CrearUsuario:
+    handler: auth/crear_usuario.handler
+    events:
+      - http:
+          path: usuarios/registro
+          method: post
+          cors: true
+
+  LoginUsuario:
+    handler: auth/login_usuario.handler
+    events:
+      - http:
+          path: usuarios/login
+          method: post
+          cors: true
+
+  ValidarAccesoAPI:
+    handler: auth/validar_acceso.handler
+
+  # -------------------------------------------------------------------------
+  # MÓDULO 2: CATÁLOGO Y PERFIL (catalogo/)
+  # -------------------------------------------------------------------------
+  ListarMenu:
+    handler: catalogo/listar_menu.handler
+    events:
+      - http:
+          path: menu
+          method: get
+          cors: true
+          # No se usa authorizer obligatorio; el token es opcional
+
+  GestionarMenu:
+    handler: catalogo/gestionar_menu.handler
+    events:
+      - http:
+          path: admin/menu
+          method: post
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  AlternarFavorito:
+    handler: catalogo/alternar_favorito.handler
+    events:
+      - http:
+          path: perfil/favoritos
+          method: post
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  VerPerfil:
+    handler: catalogo/ver_perfil.handler
+    events:
+      - http:
+          path: perfil
+          method: get
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  # -------------------------------------------------------------------------
+  # MÓDULO 3: CORE - PEDIDOS Y BYPASS (core_pedidos/)
+  # -------------------------------------------------------------------------
+  CrearPedidoWeb:
+    handler: core_pedidos/crear_pedido.handler
+    events:
+      - http:
+          path: pedidos/web
+          method: post
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  CrearPedidoRappi:
+    handler: core_pedidos/crear_pedido.handler
+    events:
+      - http:
+          path: pedidos/rappi
+          method: post
+          cors: true
+          private: true  # Protegida por API Key nativa
+
+  ProcesarPagoFake:
+    handler: core_pedidos/procesar_pago.handler
+    events:
+      - http:
+          path: pedidos/{pedido_id}/pagar
+          method: post
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  # -------------------------------------------------------------------------
+  # MÓDULO 4: OPERACIONES Y STEP FUNCTIONS (operaciones/)
+  # -------------------------------------------------------------------------
+  IniciarPaso:
+    handler: operaciones/iniciar_paso.handler
+    # Invocada directamente por Step Functions (no tiene evento HTTP)
+
+  VerColaTrabajo:
+    handler: operaciones/ver_cola_trabajo.handler
+    events:
+      - http:
+          path: empleados/cola
+          method: get
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+  CompletarPaso:
+    handler: operaciones/completar_paso.handler
+    events:
+      - http:
+          path: empleados/completar-paso
+          method: post
+          cors: true
+          authorizer:
+            name: ValidarAccesoAPI
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+            type: request
+
+# ===========================================================================
+# RECURSOS DE CLOUDFORMATION
+# ===========================================================================
+resources:
+  Resources:
+    # -----------------------------------------------------------------------
+    # S3 BUCKET - Imágenes del menú (acceso público de lectura)
+    # -----------------------------------------------------------------------
+    MenuImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: burger-king-menu-bucket-${self:provider.stage}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: ObjectWriter
+        CorsConfiguration:
+          CorsRules:
+            - AllowedHeaders: ["*"]
+              AllowedMethods: [GET]
+              AllowedOrigins: ["*"]
+              MaxAge: 3600
+
+    MenuImagesBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref MenuImagesBucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action: s3:GetObject
+              Resource: !Sub "${MenuImagesBucket.Arn}/*"
+
+    # -----------------------------------------------------------------------
+    # DYNAMODB TABLES
+    # -----------------------------------------------------------------------
+
+    # Tabla: t_usuarios
+    UsuariosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: t_usuarios
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: usuario_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: usuario_id
+            KeyType: HASH
+
+    # Tabla: t_tokens_acceso (con TTL)
+    TokensAccesoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: t_tokens_acceso
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: token
+            AttributeType: S
+        KeySchema:
+          - AttributeName: token
+            KeyType: HASH
+        TimeToLiveSpecification:
+          AttributeName: fecha_expiracion
+          Enabled: true
+
+    # Tabla: t_productos
+    ProductosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: t_productos
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: producto_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: producto_id
+            KeyType: HASH
+
+    # Tabla: t_favoritos (Hash + Sort Key compuesta)
+    FavoritosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: t_favoritos
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: usuario_id
+            AttributeType: S
+          - AttributeName: producto_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: usuario_id
+            KeyType: HASH
+          - AttributeName: producto_id
+            KeyType: RANGE
+
+    # Tabla: t_pedidos
+    PedidosTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: t_pedidos
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pedido_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pedido_id
+            KeyType: HASH
+
+    # Tabla: t_step_tokens
+    StepTokensTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: t_step_tokens
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pedido_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pedido_id
+            KeyType: HASH
+
+    # -----------------------------------------------------------------------
+    # EVENTBRIDGE RULE
+    # -----------------------------------------------------------------------
+    PedidoEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: pedido-listo-para-cocina-${self:provider.stage}
+        Description: Escucha eventos de pedidos pagados o recibidos de Rappi
+        State: ENABLED
+        EventPattern:
+          source:
+            - burger-king.pedidos
+          detail-type:
+            - PedidoPagado
+            - PedidoRappiRecibido
+        Targets:
+          - Arn: !Ref PedidoStateMachine
+            Id: IniciarFlujoStep
+            RoleArn: arn:aws:iam::${aws:accountId}:role/LabRole
+
+    # -----------------------------------------------------------------------
+    # STEP FUNCTIONS - Máquina de estados del pedido
+    # -----------------------------------------------------------------------
+    PedidoStateMachine:
+      Type: AWS::StepFunctions::StateMachine
+      DependsOn:
+        - StepTokensTable
+      Properties:
+        StateMachineName: PedidoFlujo-${self:provider.stage}
+        RoleArn: arn:aws:iam::${aws:accountId}:role/LabRole
+        DefinitionString:
+          Fn::Sub:
+            - |
+              {
+                "Comment": "Flujo de preparación de pedido: Cocina -> Empaque -> Reparto",
+                "StartAt": "Cocina",
+                "States": {
+                  "Cocina": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+                    "Parameters": {
+                      "FunctionName": "${IniciarPasoArn}",
+                      "Payload": {
+                        "pedido_id.$": "$.detail.pedido_id",
+                        "paso_actual": "cocina",
+                        "task_token.$": "$$.Task.Token"
+                      }
+                    },
+                    "ResultPath": "$.resultado_cocina",
+                    "Next": "Empaque"
+                  },
+                  "Empaque": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+                    "Parameters": {
+                      "FunctionName": "${IniciarPasoArn}",
+                      "Payload": {
+                        "pedido_id.$": "$.detail.pedido_id",
+                        "paso_actual": "empaque",
+                        "task_token.$": "$$.Task.Token"
+                      }
+                    },
+                    "ResultPath": "$.resultado_empaque",
+                    "Next": "Reparto"
+                  },
+                  "Reparto": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+                    "Parameters": {
+                      "FunctionName": "${IniciarPasoArn}",
+                      "Payload": {
+                        "pedido_id.$": "$.detail.pedido_id",
+                        "paso_actual": "reparto",
+                        "task_token.$": "$$.Task.Token"
+                      }
+                    },
+                    "ResultPath": "$.resultado_reparto",
+                    "End": true
+                  }
+                }
+              }
+            - IniciarPasoArn: !GetAtt IniciarPasoLambdaFunction.Arn
+
+# ===========================================================================
+# OUTPUTS
+# ===========================================================================
+  Outputs:
+    ApiUrl:
+      Description: URL base del API Gateway
+      Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}"
+    MenuBucketName:
+      Description: Nombre del bucket S3 para imágenes del menú
+      Value: !Ref MenuImagesBucket
+    StateMachineArn:
+      Description: ARN de la máquina de estados Step Functions
+      Value: !Ref PedidoStateMachine
