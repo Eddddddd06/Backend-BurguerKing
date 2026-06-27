@@ -21,7 +21,6 @@ provider:
     TABLA_PEDIDOS: t_pedidos
     TABLA_STEP_TOKENS: t_step_tokens
     S3_BUCKET: burger-king-menu-bucket-${self:provider.stage}
-    STATE_MACHINE_ARN: !Ref PedidoStateMachine
     EVENT_BUS_NAME: default
   apiGateway:
     apiKeys:

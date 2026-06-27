@@ -26,7 +26,6 @@ TABLA_FAVORITOS = os.environ.get("TABLA_FAVORITOS", "t_favoritos")
 TABLA_PEDIDOS = os.environ.get("TABLA_PEDIDOS", "t_pedidos")
 TABLA_STEP_TOKENS = os.environ.get("TABLA_STEP_TOKENS", "t_step_tokens")
 S3_BUCKET = os.environ.get("S3_BUCKET", "burger-king-menu-bucket-dev")
-STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN", "")
 EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME", "default")
 
 
