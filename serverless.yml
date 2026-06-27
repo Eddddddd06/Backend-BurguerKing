@@ -1,6 +1,6 @@
 service: burger-king-backend
 
-frameworkVersion: "4.65.0"
+frameworkVersion: "4"
 
 provider:
   name: aws
