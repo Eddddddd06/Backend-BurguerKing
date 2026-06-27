@@ -1,14 +1,14 @@
 """
 Lambda: Crear_Pedido
-Rutas:  POST /pedidos/web   (Protegida por Token - Custom Authorizer)
+Rutas:  POST /pedidos/web    (Protegida por Token - Custom Authorizer)
         POST /pedidos/rappi  (Protegida por API Key nativa)
 Módulo: core_pedidos/
 
-Maneja DOS rutas con comportamientos distintos desde un único handler.
-
-Ruta Web:
-  Entrada (Body): items (lista de {producto_id, cantidad})
-  Lógica:  Calcula total desde t_productos. Estado = PENDIENTE_PAGO. Origen = web.
+Ruta Web (desde carrito):
+  Entrada (Body): direccion_entrega, departamento_entrega (opcionales, usan dirección base si se omiten)
+  Lógica:  Lee items del carrito del usuario. Calcula total desde t_productos.
+           Guarda dirección de entrega en el pedido. Limpia el carrito.
+           Estado = PENDIENTE_PAGO. Origen = web.
   Salida:  pedido_id, total, estado
 
 Ruta Rappi:
@@ -24,22 +24,23 @@ from decimal import Decimal
 from utils import (
     dynamodb,
     events_client,
+    TABLA_USUARIOS,
     TABLA_PRODUCTOS,
     TABLA_PEDIDOS,
+    TABLA_CARRITOS,
     EVENT_BUS_NAME,
     respuesta,
     obtener_body,
     DecimalEncoder,
 )
 
-# Tiempo estimado por defecto para pedidos Rappi (en minutos)
 _TIEMPO_ESTIMADO_MINUTOS = 25
 
 
 def _calcular_total(items: list) -> tuple:
     """
-    Calcula el total del pedido leyendo precios desde t_productos.
-    Retorna (total, items_detalle) o lanza ValueError si hay un producto inválido.
+    Calcula el total leyendo precios reales desde t_productos.
+    Retorna (total, items_detalle) o lanza ValueError si hay producto inválido.
     """
     tabla_productos = dynamodb.Table(TABLA_PRODUCTOS)
     total = Decimal("0")
@@ -74,10 +75,22 @@ def _calcular_total(items: list) -> tuple:
     return total, items_detalle
 
 
-def _handler_web(event, body):
-    """Lógica para POST /pedidos/web — Pedidos desde la app/web propia."""
+def _limpiar_carrito(usuario_id: str):
+    """Elimina todos los ítems del carrito del usuario."""
+    tabla_carrito = dynamodb.Table(TABLA_CARRITOS)
+    resultado = tabla_carrito.query(
+        KeyConditionExpression="usuario_id = :uid",
+        ExpressionAttributeValues={":uid": usuario_id},
+    )
+    for item in resultado.get("Items", []):
+        tabla_carrito.delete_item(
+            Key={"usuario_id": usuario_id, "producto_id": item["producto_id"]}
+        )
 
-    # --- Extraer usuario_id del context del authorizer ---
+
+def _handler_web(event, body):
+    """Lógica para POST /pedidos/web — Pedido creado desde el carrito del usuario."""
+
     request_context = event.get("requestContext", {})
     authorizer_context = request_context.get("authorizer", {})
     usuario_id = authorizer_context.get("usuario_id", "")
@@ -85,18 +98,47 @@ def _handler_web(event, body):
     if not usuario_id:
         return respuesta(401, {"mensaje": "No se pudo identificar al usuario."})
 
-    # --- Validar items ---
-    items = body.get("items", [])
-    if not items or not isinstance(items, list):
+    # --- Leer items desde el carrito ---
+    tabla_carrito = dynamodb.Table(TABLA_CARRITOS)
+    resultado_carrito = tabla_carrito.query(
+        KeyConditionExpression="usuario_id = :uid",
+        ExpressionAttributeValues={":uid": usuario_id},
+    )
+    items_carrito = resultado_carrito.get("Items", [])
+
+    if not items_carrito:
         return respuesta(400, {
-            "mensaje": "El campo 'items' es obligatorio y debe ser una lista."
+            "mensaje": "El carrito está vacío. Agrega productos antes de crear el pedido."
         })
 
-    # --- Calcular total ---
+    items_para_calcular = [
+        {"producto_id": i["producto_id"], "cantidad": int(i["cantidad"])}
+        for i in items_carrito
+    ]
+
+    # --- Calcular total con precios reales desde t_productos ---
     try:
-        total, items_detalle = _calcular_total(items)
+        total, items_detalle = _calcular_total(items_para_calcular)
     except ValueError as e:
         return respuesta(400, {"mensaje": str(e)})
+
+    # --- Dirección de entrega: body o dirección base del usuario ---
+    direccion_entrega = body.get("direccion_entrega", "").strip()
+    departamento_entrega = body.get("departamento_entrega", "").strip()
+
+    if not direccion_entrega or not departamento_entrega:
+        tabla_usuarios = dynamodb.Table(TABLA_USUARIOS)
+        resultado_usuario = tabla_usuarios.get_item(Key={"usuario_id": usuario_id})
+        usuario = resultado_usuario.get("Item", {})
+        if not direccion_entrega:
+            direccion_entrega = usuario.get("direccion", "")
+        if not departamento_entrega:
+            departamento_entrega = usuario.get("departamento", "")
+
+    if not direccion_entrega or not departamento_entrega:
+        return respuesta(400, {
+            "mensaje": "Se requiere 'direccion_entrega' y 'departamento_entrega' (o tener una dirección base registrada)."
+        })
 
     # --- Crear pedido ---
     pedido_id = str(uuid.uuid4())
@@ -109,19 +151,25 @@ def _handler_web(event, body):
         "total": total,
         "estado": "PENDIENTE_PAGO",
         "origen": "web",
+        "direccion_entrega": direccion_entrega,
+        "departamento_entrega": departamento_entrega,
     })
+
+    # --- Limpiar carrito ---
+    _limpiar_carrito(usuario_id)
 
     return respuesta(201, {
         "pedido_id": pedido_id,
         "total": total,
         "estado": "PENDIENTE_PAGO",
+        "direccion_entrega": direccion_entrega,
+        "departamento_entrega": departamento_entrega,
     })
 
 
 def _handler_rappi(event, body):
     """Lógica para POST /pedidos/rappi — Pedidos desde plataforma Rappi."""
 
-    # --- Validar campos obligatorios ---
     origen = body.get("origen", "").strip()
     codigo_pedido_ext = body.get("codigo_pedido_ext", "").strip()
     cliente_nombre = body.get("cliente_nombre", "").strip()
@@ -133,7 +181,6 @@ def _handler_rappi(event, body):
             "mensaje": "Campos obligatorios: origen, codigo_pedido_ext, cliente_nombre, items, total_pagado."
         })
 
-    # --- Crear pedido con estado PAGADO_EXTERNO ---
     pedido_id = str(uuid.uuid4())
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
 
@@ -147,7 +194,6 @@ def _handler_rappi(event, body):
         "origen": origen,
     })
 
-    # --- Disparar evento a EventBridge (el pago ya se hizo en Rappi) ---
     detalle = {
         "pedido_id": pedido_id,
         "origen": origen,
@@ -174,10 +220,7 @@ def _handler_rappi(event, body):
 
 
 def handler(event, context):
-    """
-    Handler principal. Detecta la ruta invocada y delega al sub-handler
-    correspondiente (web o rappi).
-    """
+    """Handler principal. Detecta la ruta invocada y delega al sub-handler."""
     try:
         body = obtener_body(event)
         path = event.get("path", "")
