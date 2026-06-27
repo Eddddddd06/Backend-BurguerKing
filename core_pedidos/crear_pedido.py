@@ -184,10 +184,11 @@ def _handler_rappi(event, body):
     pedido_id = str(uuid.uuid4())
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
 
+    items_detalle = json.loads(json.dumps(items), parse_float=Decimal)
     try:
         _, items_detalle = _calcular_total(items)
-    except ValueError:
-        items_detalle = json.loads(json.dumps(items), parse_float=Decimal)
+    except Exception:
+        pass
 
     tabla_pedidos.put_item(Item={
         "pedido_id": pedido_id,
