@@ -140,6 +140,11 @@ def _handler_web(event, body):
             "mensaje": "Se requiere 'direccion_entrega' y 'departamento_entrega' (o tener una dirección base registrada)."
         })
 
+    # --- Determinar tenant (sede) ---
+    tenant_id = body.get("sede") or authorizer_context.get("tenant_id")
+    if not tenant_id:
+        return respuesta(400, {"mensaje": "El campo 'sede' es obligatorio para crear un pedido (o el usuario debe tener tenant en su token)."})
+
     # --- Crear pedido ---
     pedido_id = str(uuid.uuid4())
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
@@ -153,6 +158,7 @@ def _handler_web(event, body):
         "origen": "web",
         "direccion_entrega": direccion_entrega,
         "departamento_entrega": departamento_entrega,
+        "tenant_id": tenant_id,
     })
 
     # --- Limpiar carrito ---
@@ -180,6 +186,11 @@ def _handler_rappi(event, body):
             "mensaje": "Campos obligatorios: origen, codigo_pedido_ext, cliente_nombre, items, total_pagado."
         })
 
+    # --- Requerir sede/tenant en el payload de Rappi ---
+    tenant_id = body.get("sede")
+    if not tenant_id:
+        return respuesta(400, {"mensaje": "El campo 'sede' es obligatorio para pedidos desde Rappi."})
+
     pedido_id = str(uuid.uuid4())
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
 
@@ -197,12 +208,14 @@ def _handler_rappi(event, body):
         "total": Decimal(str(total_pagado)),
         "estado": "PAGADO_EXTERNO",
         "origen": origen,
+        "tenant_id": tenant_id,
     })
 
     detalle = {
         "pedido_id": pedido_id,
         "origen": origen,
         "codigo_pedido_ext": codigo_pedido_ext,
+        "tenant_id": tenant_id,
     }
 
     events_client.put_events(

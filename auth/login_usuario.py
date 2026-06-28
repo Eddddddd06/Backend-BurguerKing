@@ -68,12 +68,30 @@ def handler(event, context):
         fecha_expiracion = int(time.time()) + _TOKEN_TTL_SECONDS
 
         tabla_tokens = dynamodb.Table(TABLA_TOKENS)
-        tabla_tokens.put_item(Item={
+        # Determinar tenant_id para administradores/empleados
+        tenant_id = None
+        if usuario.get("rol") == "admin":
+            # El formato obligatorio es admin.<sede>@burguerking.com
+            local = usuario.get("email", "").split("@")[0]
+            if not local.startswith("admin."):
+                return respuesta(401, {"mensaje": "Credenciales inválidas."})
+            parts = local.split(".", 1)
+            if len(parts) < 2 or not parts[1]:
+                return respuesta(401, {"mensaje": "Credenciales inválidas."})
+            tenant_id = parts[1]
+        else:
+            tenant_id = usuario.get("tenant_id")
+
+        item = {
             "token": token,
             "usuario_id": usuario["usuario_id"],
             "rol": usuario["rol"],
             "fecha_expiracion": fecha_expiracion,
-        })
+        }
+        if tenant_id:
+            item["tenant_id"] = tenant_id
+
+        tabla_tokens.put_item(Item=item)
 
         return respuesta(200, {
             "token": token,

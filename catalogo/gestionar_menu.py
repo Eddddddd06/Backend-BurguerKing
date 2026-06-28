@@ -25,11 +25,15 @@ def handler(event, context):
         request_context = event.get("requestContext", {})
         authorizer_context = request_context.get("authorizer", {})
         rol = authorizer_context.get("rol", "")
+        tenant_id = authorizer_context.get("tenant_id", "")
 
         if rol != "admin":
             return respuesta(403, {
                 "mensaje": "Acceso denegado. Se requiere rol de administrador."
             })
+
+        if not tenant_id:
+            return respuesta(403, {"mensaje": "No se pudo identificar la sede del administrador (tenant_id)."})
 
         # --- Validar campos obligatorios ---
         body = obtener_body(event)
@@ -97,6 +101,7 @@ def handler(event, context):
             "nombre": nombre,
             "precio": precio_decimal,
             "imagen_url": imagen_url,
+            "tenant_id": tenant_id,
         })
 
         return respuesta(201, {

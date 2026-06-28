@@ -98,6 +98,7 @@ def handler(event, context):
             "pedido_id": pedido_id,
             "usuario_id": usuario_id,
             "origen": pedido.get("origen", "web"),
+            "tenant_id": pedido.get("tenant_id"),
         }
 
         events_client.put_events(

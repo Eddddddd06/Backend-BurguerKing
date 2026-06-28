@@ -30,9 +30,18 @@ def handler(event, context):
                 "mensaje": "Acceso denegado. Se requiere rol de empleado o administrador."
             })
 
-        # --- Escanear t_step_tokens para obtener pasos pendientes ---
+        # --- Escanear t_step_tokens para obtener pasos pendientes filtrando por tenant ---
         tabla_step = dynamodb.Table(TABLA_STEP_TOKENS)
-        scan_tokens = tabla_step.scan()
+        authorizer_tenant = authorizer_context.get("tenant_id")
+
+        if authorizer_tenant:
+            scan_tokens = tabla_step.scan(
+                FilterExpression="tenant_id = :t",
+                ExpressionAttributeValues={":t": authorizer_tenant},
+            )
+        else:
+            scan_tokens = tabla_step.scan()
+
         step_items = scan_tokens.get("Items", [])
 
         if not step_items:
@@ -45,6 +54,11 @@ def handler(event, context):
         for step in step_items:
             pedido_id = step.get("pedido_id", "")
             paso_actual = step.get("paso_actual", "")
+            step_tenant = step.get("tenant_id")
+
+            # Si el step no pertenece a la sede del empleado, omitir
+            if authorizer_tenant and step_tenant and step_tenant != authorizer_tenant:
+                continue
 
             # Obtener detalle del pedido
             resultado = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})

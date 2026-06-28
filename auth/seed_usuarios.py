@@ -62,14 +62,27 @@ def handler(event, context):
         usuario_id = str(uuid.uuid4())
         password_hash = _hashear_password(password)
 
-        tabla.put_item(Item={
+        # Intentar inferir 'tenant_id' desde el body o desde el email (p.ej. admin.barranco@...)
+        tenant_id = body.get("sede") or None
+        if not tenant_id:
+            local = email.split("@")[0]
+            if "." in local:
+                parts = local.split(".", 1)
+                if len(parts) > 1 and parts[1]:
+                    tenant_id = parts[1]
+
+        item = {
             "usuario_id": usuario_id,
             "email": email,
             "password_hash": password_hash,
             "rol": rol,
             "nombre": f"Usuario {rol.capitalize()}",
             "tarjeta_guardada": None,
-        })
+        }
+        if tenant_id:
+            item["tenant_id"] = tenant_id
+
+        tabla.put_item(Item=item)
 
         return respuesta(201, {
             "mensaje": f"Usuario '{rol}' creado exitosamente.",

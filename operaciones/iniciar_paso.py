@@ -38,14 +38,22 @@ def handler(event, context):
                   f"paso_actual={paso_actual}, task_token={'presente' if task_token else 'ausente'}")
             raise ValueError("pedido_id, paso_actual y task_token son obligatorios.")
 
-        # --- Guardar token en t_step_tokens ---
+        # --- Guardar token en t_step_tokens (incluyendo tenant_id tomado desde el pedido) ---
         tabla_tokens = dynamodb.Table(TABLA_STEP_TOKENS)
+        tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
+        pedido_res = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
+        pedido = pedido_res.get("Item", {})
+        tenant_id = pedido.get("tenant_id")
 
-        tabla_tokens.put_item(Item={
+        item = {
             "pedido_id": pedido_id,
             "paso_actual": paso_actual,
             "task_token": task_token,
-        })
+        }
+        if tenant_id:
+            item["tenant_id"] = tenant_id
+
+        tabla_tokens.put_item(Item=item)
 
         # --- Actualizar estado del pedido en t_pedidos ---
         nuevo_estado = _ESTADO_POR_PASO.get(paso_actual, paso_actual.upper())

@@ -72,6 +72,7 @@ def handler(event, context):
         # --- Token válido: generar Allow con context ---
         usuario_id = item["usuario_id"]
         rol = item["rol"]
+        tenant_id = item.get("tenant_id", "")
 
         # Construir un ARN comodín para permitir todos los métodos del stage
         # Esto evita problemas de caché del authorizer entre rutas
@@ -80,14 +81,18 @@ def handler(event, context):
         api_id_stage = arn_parts[5].split("/")
         wildcard_resource = f"{api_gateway_arn}:{api_id_stage[0]}/{api_id_stage[1]}/*"
 
+        ctx = {
+            "usuario_id": usuario_id,
+            "rol": rol,
+        }
+        if tenant_id:
+            ctx["tenant_id"] = tenant_id
+
         return _generar_policy(
             principal_id=usuario_id,
             effect="Allow",
             resource=wildcard_resource,
-            context={
-                "usuario_id": usuario_id,
-                "rol": rol,
-            },
+            context=ctx,
         )
 
     except Exception as e:

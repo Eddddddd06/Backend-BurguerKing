@@ -54,16 +54,23 @@ def _obtener_usuario_desde_token(event):
         return None
 
 
-def _obtener_favoritos_usuario(usuario_id):
+def _obtener_favoritos_usuario(usuario_id, tenant_id=None):
     """
     Retorna un set con los producto_id que el usuario ha pedido y pagado.
     Deriva favoritos del historial de pedidos en lugar de t_favoritos.
     """
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
-    scan_result = tabla_pedidos.scan(
-        FilterExpression="usuario_id = :uid",
-        ExpressionAttributeValues={":uid": usuario_id},
-    )
+    # Si se proporciona tenant_id, filtrar por tenant también
+    if tenant_id:
+        scan_result = tabla_pedidos.scan(
+            FilterExpression="usuario_id = :uid AND tenant_id = :t",
+            ExpressionAttributeValues={":uid": usuario_id, ":t": tenant_id},
+        )
+    else:
+        scan_result = tabla_pedidos.scan(
+            FilterExpression="usuario_id = :uid",
+            ExpressionAttributeValues={":uid": usuario_id},
+        )
     favoritos = set()
     for pedido in scan_result.get("Items", []):
         if pedido.get("estado") not in _ESTADOS_PAGADOS:
@@ -79,14 +86,25 @@ def handler(event, context):
     """Handler principal de la Lambda Listar_Menu."""
     try:
         tabla_productos = dynamodb.Table(TABLA_PRODUCTOS)
-        scan_result = tabla_productos.scan()
+
+        # --- Obtener 'sede' desde query params ---
+        qs = event.get("queryStringParameters") or {}
+        sede = (qs.get("sede") or qs.get("tenant")) if qs else None
+        if not sede:
+            return respuesta(400, {"mensaje": "El parámetro de consulta 'sede' es obligatorio."})
+
+        # Escanear productos filtrando por tenant_id
+        scan_result = tabla_productos.scan(
+            FilterExpression="tenant_id = :t",
+            ExpressionAttributeValues={":t": sede},
+        )
         productos = scan_result.get("Items", [])
 
         usuario_id = _obtener_usuario_desde_token(event)
         favoritos_set = set()
 
         if usuario_id:
-            favoritos_set = _obtener_favoritos_usuario(usuario_id)
+            favoritos_set = _obtener_favoritos_usuario(usuario_id, tenant_id=sede)
 
         menu = [
             {

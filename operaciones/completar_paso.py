@@ -10,11 +10,12 @@ Entrada (Body): pedido_id
 Salida:         mensaje, siguiente_paso
 """
 
+# -*- coding: utf-8 -*-
 from utils import dynamodb, sfn_client, TABLA_STEP_TOKENS, TABLA_PEDIDOS, respuesta, obtener_body
 
 import json
-
-
+import boto3
+import os
 # Roles permitidos para completar pasos
 _ROLES_PERMITIDOS = {"admin", "empleado", "cocina", "empaque", "reparto"}
 
@@ -54,10 +55,68 @@ def handler(event, context):
 
         task_token = step_item.get("task_token", "")
         paso_actual = step_item.get("paso_actual", "")
+        step_tenant = step_item.get("tenant_id")
+
+        # Verificar que el empleado/admin opere sobre la misma sede
+        authorizer_tenant = authorizer_context.get("tenant_id")
+        if step_tenant and authorizer_tenant and step_tenant != authorizer_tenant:
+            return respuesta(403, {"mensaje": "Acceso denegado. El pedido no pertenece a su sede."})
 
         if not task_token:
             return respuesta(500, {
                 "mensaje": "El task_token no está disponible para este paso."
+            })
+
+        # --- Permitir cancelar el pedido o completarlo ---
+        accion = body.get("accion", "completar").strip().lower()
+
+        # Cliente SQS para DLQ
+        sqs = boto3.client("sqs")
+        queue_name = f"dlq-pedidos-{os.environ.get('STAGE', 'dev')}"
+        try:
+            queue_url = sqs.get_queue_url(QueueName=queue_name)["QueueUrl"]
+        except Exception:
+            queue_url = None
+
+        if accion == "cancelar":
+            # Enviar failure a Step Functions
+            try:
+                sfn_client.send_task_failure(
+                    taskToken=task_token,
+                    error="PedidoCancelado",
+                    cause="Cancelado por empleado",
+                )
+            except Exception as e:
+                print(f"[WARN] No se pudo enviar task_failure: {e}")
+
+            # Actualizar estado del pedido a CANCELADO y notificar
+            tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
+            tabla_pedidos.update_item(
+                Key={"pedido_id": pedido_id},
+                UpdateExpression="SET estado = :e, notificacion = :n",
+                ExpressionAttributeValues={
+                    ":e": "CANCELADO",
+                    ":n": "Hubo un problema, su pedido ha sido cancelado y se efectuará el reembolso correspondiente",
+                },
+            )
+
+            # Eliminar token temporal
+            tabla_step.delete_item(Key={"pedido_id": pedido_id})
+
+            # Enviar mensaje a DLQ si está disponible
+            if queue_url:
+                try:
+                    sqs.send_message(
+                        QueueUrl=queue_url,
+                        MessageBody=json.dumps({"pedido_id": pedido_id, "tenant_id": step_tenant, "motivo": "cancelado_por_empleado"}),
+                    )
+                except Exception as e:
+                    print(f"[WARN] No se pudo enviar a DLQ: {e}")
+
+            return respuesta(200, {
+                "mensaje": "Pedido cancelado correctamente. Se gestionará el reembolso.",
+                "pedido_id": pedido_id,
+                "estado": "CANCELADO",
             })
 
         # --- Determinar siguiente paso ---

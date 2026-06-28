@@ -271,6 +271,8 @@ resources:
         AttributeDefinitions:
           - AttributeName: usuario_id
             AttributeType: S
+          - AttributeName: tenant_id
+            AttributeType: S
         KeySchema:
           - AttributeName: usuario_id
             KeyType: HASH
@@ -283,6 +285,8 @@ resources:
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
           - AttributeName: token
+            AttributeType: S
+          - AttributeName: tenant_id
             AttributeType: S
         KeySchema:
           - AttributeName: token
@@ -300,9 +304,20 @@ resources:
         AttributeDefinitions:
           - AttributeName: producto_id
             AttributeType: S
+          - AttributeName: tenant_id
+            AttributeType: S
         KeySchema:
           - AttributeName: producto_id
             KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: TenantIndex
+            KeySchema:
+              - AttributeName: tenant_id
+                KeyType: HASH
+              - AttributeName: producto_id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
 
     # Tabla: t_carritos (Hash + Sort Key: un ítem por producto en el carrito del usuario)
     CarritosTable:
@@ -330,9 +345,22 @@ resources:
         AttributeDefinitions:
           - AttributeName: pedido_id
             AttributeType: S
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: estado
+            AttributeType: S
         KeySchema:
           - AttributeName: pedido_id
             KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: TenantEstadoIndex
+            KeySchema:
+              - AttributeName: tenant_id
+                KeyType: HASH
+              - AttributeName: estado
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
 
     # Tabla: t_step_tokens
     StepTokensTable:
@@ -343,9 +371,19 @@ resources:
         AttributeDefinitions:
           - AttributeName: pedido_id
             AttributeType: S
+          - AttributeName: tenant_id
+            AttributeType: S
         KeySchema:
           - AttributeName: pedido_id
             KeyType: HASH
+
+    # -----------------------------------------------------------------------
+    # SQS DLQ para pedidos cancelados/errores en Step Functions
+    # -----------------------------------------------------------------------
+    DeadLetterQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: dlq-pedidos-${self:provider.stage}
 
     # -----------------------------------------------------------------------
     # EVENTBRIDGE RULE
