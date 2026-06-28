@@ -43,9 +43,19 @@ def handler(event, context):
         if not pedido_id:
             return respuesta(400, {"mensaje": "El campo 'pedido_id' es obligatorio."})
 
+        # --- Obtener tenant_id del pedido para poder consultar t_step_tokens ---
+        tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
+        res_pedido = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
+        pedido = res_pedido.get("Item")
+
+        if not pedido:
+            return respuesta(404, {"mensaje": f"No se encontró el pedido '{pedido_id}'."})
+
+        step_tenant = pedido.get("tenant_id") or "GLOBAL"
+
         # --- Recuperar task_token de t_step_tokens ---
         tabla_step = dynamodb.Table(TABLA_STEP_TOKENS)
-        resultado = tabla_step.get_item(Key={"pedido_id": pedido_id})
+        resultado = tabla_step.get_item(Key={"tenant_id": step_tenant, "pedido_id": pedido_id})
         step_item = resultado.get("Item")
 
         if not step_item:
@@ -101,7 +111,7 @@ def handler(event, context):
             )
 
             # Eliminar token temporal
-            tabla_step.delete_item(Key={"pedido_id": pedido_id})
+            tabla_step.delete_item(Key={"tenant_id": step_tenant, "pedido_id": pedido_id})
 
             # Enviar mensaje a DLQ si está disponible
             if queue_url:
@@ -137,7 +147,7 @@ def handler(event, context):
         )
 
         # --- Eliminar registro de la tabla temporal ---
-        tabla_step.delete_item(Key={"pedido_id": pedido_id})
+        tabla_step.delete_item(Key={"tenant_id": step_tenant, "pedido_id": pedido_id})
 
         # --- Si era el último paso, actualizar pedido a ENTREGADO ---
         if siguiente_paso == "ENTREGADO":

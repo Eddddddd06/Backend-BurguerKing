@@ -271,8 +271,6 @@ resources:
         AttributeDefinitions:
           - AttributeName: usuario_id
             AttributeType: S
-          - AttributeName: tenant_id
-            AttributeType: S
         KeySchema:
           - AttributeName: usuario_id
             KeyType: HASH
@@ -374,8 +372,10 @@ resources:
           - AttributeName: tenant_id
             AttributeType: S
         KeySchema:
-          - AttributeName: pedido_id
+          - AttributeName: tenant_id
             KeyType: HASH
+          - AttributeName: pedido_id
+            KeyType: RANGE
 
     # -----------------------------------------------------------------------
     # SQS DLQ para pedidos cancelados/errores en Step Functions

@@ -43,15 +43,14 @@ def handler(event, context):
         tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
         pedido_res = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
         pedido = pedido_res.get("Item", {})
-        tenant_id = pedido.get("tenant_id")
+        tenant_id = pedido.get("tenant_id") or "GLOBAL"
 
         item = {
             "pedido_id": pedido_id,
             "paso_actual": paso_actual,
             "task_token": task_token,
+            "tenant_id": tenant_id,
         }
-        if tenant_id:
-            item["tenant_id"] = tenant_id
 
         tabla_tokens.put_item(Item=item)
 

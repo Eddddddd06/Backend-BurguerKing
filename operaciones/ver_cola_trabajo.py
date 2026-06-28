@@ -35,8 +35,8 @@ def handler(event, context):
         authorizer_tenant = authorizer_context.get("tenant_id")
 
         if authorizer_tenant:
-            scan_tokens = tabla_step.scan(
-                FilterExpression="tenant_id = :t",
+            scan_tokens = tabla_step.query(
+                KeyConditionExpression="tenant_id = :t",
                 ExpressionAttributeValues={":t": authorizer_tenant},
             )
         else:
