@@ -298,22 +298,15 @@ resources:
         TableName: t_productos
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: producto_id
-            AttributeType: S
           - AttributeName: tenant_id
             AttributeType: S
-        KeySchema:
           - AttributeName: producto_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: tenant_id
             KeyType: HASH
-        GlobalSecondaryIndexes:
-          - IndexName: TenantIndex
-            KeySchema:
-              - AttributeName: tenant_id
-                KeyType: HASH
-              - AttributeName: producto_id
-                KeyType: RANGE
-            Projection:
-              ProjectionType: ALL
+          - AttributeName: producto_id
+            KeyType: RANGE
 
     # Tabla: t_carritos (Hash + Sort Key: un ítem por producto en el carrito del usuario)
     CarritosTable:
@@ -322,14 +315,14 @@ resources:
         TableName: t_carritos
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: usuario_id
+          - AttributeName: tenant_id
             AttributeType: S
-          - AttributeName: producto_id
+          - AttributeName: usuario_producto_id
             AttributeType: S
         KeySchema:
-          - AttributeName: usuario_id
+          - AttributeName: tenant_id
             KeyType: HASH
-          - AttributeName: producto_id
+          - AttributeName: usuario_producto_id
             KeyType: RANGE
 
     # Tabla: t_pedidos
@@ -339,15 +332,17 @@ resources:
         TableName: t_pedidos
         BillingMode: PAY_PER_REQUEST
         AttributeDefinitions:
-          - AttributeName: pedido_id
-            AttributeType: S
           - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: pedido_id
             AttributeType: S
           - AttributeName: estado
             AttributeType: S
         KeySchema:
-          - AttributeName: pedido_id
+          - AttributeName: tenant_id
             KeyType: HASH
+          - AttributeName: pedido_id
+            KeyType: RANGE
         GlobalSecondaryIndexes:
           - IndexName: TenantEstadoIndex
             KeySchema:
@@ -427,6 +422,7 @@ resources:
                       "FunctionName": "${IniciarPasoArn}",
                       "Payload": {
                         "pedido_id.$": "$.detail.pedido_id",
+                        "tenant_id.$": "$.detail.tenant_id",
                         "paso_actual": "cocina",
                         "task_token.$": "$$.Task.Token"
                       }
@@ -441,6 +437,7 @@ resources:
                       "FunctionName": "${IniciarPasoArn}",
                       "Payload": {
                         "pedido_id.$": "$.detail.pedido_id",
+                        "tenant_id.$": "$.detail.tenant_id",
                         "paso_actual": "empaque",
                         "task_token.$": "$$.Task.Token"
                       }
@@ -455,6 +452,7 @@ resources:
                       "FunctionName": "${IniciarPasoArn}",
                       "Payload": {
                         "pedido_id.$": "$.detail.pedido_id",
+                        "tenant_id.$": "$.detail.tenant_id",
                         "paso_actual": "reparto",
                         "task_token.$": "$$.Task.Token"
                       }

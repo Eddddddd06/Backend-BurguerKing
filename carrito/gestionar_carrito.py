@@ -20,11 +20,11 @@ def _obtener_usuario(event):
     return ctx.get("usuario_id", "")
 
 
-def _ver_carrito(usuario_id):
+def _ver_carrito(usuario_id, sede):
     tabla = dynamodb.Table(TABLA_CARRITOS)
     resultado = tabla.query(
-        KeyConditionExpression="usuario_id = :uid",
-        ExpressionAttributeValues={":uid": usuario_id},
+        KeyConditionExpression="tenant_id = :t AND begins_with(usuario_producto_id, :uid_prefix)",
+        ExpressionAttributeValues={":t": sede, ":uid_prefix": f"{usuario_id}#"},
     )
     items = resultado.get("Items", [])
 
@@ -50,7 +50,7 @@ def _ver_carrito(usuario_id):
     })
 
 
-def _agregar_item(usuario_id, body):
+def _agregar_item(usuario_id, body, sede):
     producto_id = body.get("producto_id", "").strip()
     cantidad = body.get("cantidad", 1)
 
@@ -61,14 +61,16 @@ def _agregar_item(usuario_id, body):
         return respuesta(400, {"mensaje": "El campo 'cantidad' debe ser un entero positivo."})
 
     tabla_productos = dynamodb.Table(TABLA_PRODUCTOS)
-    resultado = tabla_productos.get_item(Key={"producto_id": producto_id})
+    resultado = tabla_productos.get_item(Key={"tenant_id": sede, "producto_id": producto_id})
     producto = resultado.get("Item")
 
     if not producto:
-        return respuesta(404, {"mensaje": f"Producto '{producto_id}' no encontrado."})
+        return respuesta(404, {"mensaje": f"Producto '{producto_id}' no encontrado en la sede especificada."})
 
     tabla_carrito = dynamodb.Table(TABLA_CARRITOS)
     tabla_carrito.put_item(Item={
+        "tenant_id": sede,
+        "usuario_producto_id": f"{usuario_id}#{producto_id}",
         "usuario_id": usuario_id,
         "producto_id": producto_id,
         "cantidad": cantidad,
@@ -83,17 +85,17 @@ def _agregar_item(usuario_id, body):
     })
 
 
-def _eliminar_item(usuario_id, producto_id):
+def _eliminar_item(usuario_id, producto_id, sede):
     if not producto_id:
         return respuesta(400, {"mensaje": "El 'producto_id' es obligatorio en la ruta."})
 
     tabla = dynamodb.Table(TABLA_CARRITOS)
-    resultado = tabla.get_item(Key={"usuario_id": usuario_id, "producto_id": producto_id})
+    resultado = tabla.get_item(Key={"tenant_id": sede, "usuario_producto_id": f"{usuario_id}#{producto_id}"})
 
     if not resultado.get("Item"):
         return respuesta(404, {"mensaje": "El producto no está en el carrito."})
 
-    tabla.delete_item(Key={"usuario_id": usuario_id, "producto_id": producto_id})
+    tabla.delete_item(Key={"tenant_id": sede, "usuario_producto_id": f"{usuario_id}#{producto_id}"})
 
     return respuesta(200, {"mensaje": "Producto eliminado del carrito."})
 
@@ -106,18 +108,27 @@ def handler(event, context):
             return respuesta(401, {"mensaje": "No se pudo identificar al usuario."})
 
         metodo = event.get("httpMethod", "").upper()
+        qs = event.get("queryStringParameters") or {}
+        sede_qs = qs.get("sede") or qs.get("tenant")
 
         if metodo == "GET":
-            return _ver_carrito(usuario_id)
+            if not sede_qs:
+                return respuesta(400, {"mensaje": "El parámetro 'sede' es obligatorio para ver el carrito."})
+            return _ver_carrito(usuario_id, sede_qs)
 
         if metodo == "POST":
             body = obtener_body(event)
-            return _agregar_item(usuario_id, body)
+            sede_body = body.get("sede") or sede_qs
+            if not sede_body:
+                return respuesta(400, {"mensaje": "El campo 'sede' es obligatorio para agregar al carrito."})
+            return _agregar_item(usuario_id, body, sede_body)
 
         if metodo == "DELETE":
             path_params = event.get("pathParameters") or {}
             producto_id = path_params.get("producto_id", "").strip()
-            return _eliminar_item(usuario_id, producto_id)
+            if not sede_qs:
+                return respuesta(400, {"mensaje": "El parámetro 'sede' es obligatorio para eliminar un ítem."})
+            return _eliminar_item(usuario_id, producto_id, sede_qs)
 
         return respuesta(405, {"mensaje": "Método no permitido."})
 

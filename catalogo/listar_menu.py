@@ -60,19 +60,20 @@ def _obtener_favoritos_usuario(usuario_id, tenant_id=None):
     Deriva favoritos del historial de pedidos en lugar de t_favoritos.
     """
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
-    # Si se proporciona tenant_id, filtrar por tenant también
+    # Si se proporciona tenant_id, usar query, de lo contrario scan (fallback)
     if tenant_id:
-        scan_result = tabla_pedidos.scan(
-            FilterExpression="usuario_id = :uid AND tenant_id = :t",
+        resultado = tabla_pedidos.query(
+            KeyConditionExpression="tenant_id = :t",
+            FilterExpression="usuario_id = :uid",
             ExpressionAttributeValues={":uid": usuario_id, ":t": tenant_id},
         )
     else:
-        scan_result = tabla_pedidos.scan(
+        resultado = tabla_pedidos.scan(
             FilterExpression="usuario_id = :uid",
             ExpressionAttributeValues={":uid": usuario_id},
         )
     favoritos = set()
-    for pedido in scan_result.get("Items", []):
+    for pedido in resultado.get("Items", []):
         if pedido.get("estado") not in _ESTADOS_PAGADOS:
             continue
         for item in pedido.get("items", []):
@@ -93,12 +94,12 @@ def handler(event, context):
         if not sede:
             return respuesta(400, {"mensaje": "El parámetro de consulta 'sede' es obligatorio."})
 
-        # Escanear productos filtrando por tenant_id
-        scan_result = tabla_productos.scan(
-            FilterExpression="tenant_id = :t",
+        # Consultar productos por tenant_id
+        query_result = tabla_productos.query(
+            KeyConditionExpression="tenant_id = :t",
             ExpressionAttributeValues={":t": sede},
         )
-        productos = scan_result.get("Items", [])
+        productos = query_result.get("Items", [])
 
         usuario_id = _obtener_usuario_desde_token(event)
         favoritos_set = set()

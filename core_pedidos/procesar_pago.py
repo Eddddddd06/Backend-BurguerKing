@@ -51,18 +51,24 @@ def handler(event, context):
         if not pedido_id:
             return respuesta(400, {"mensaje": "El parámetro 'pedido_id' es obligatorio."})
 
-        # --- Validar número de tarjeta ---
+        # --- Validar número de tarjeta y sede ---
         body = obtener_body(event)
         numero_tarjeta = body.get("numero_tarjeta", "").strip()
+        tenant_id = body.get("sede") or authorizer_context.get("tenant_id")
 
         if not numero_tarjeta:
             return respuesta(400, {
                 "mensaje": "El campo 'numero_tarjeta' es obligatorio."
             })
 
+        if not tenant_id:
+            return respuesta(400, {
+                "mensaje": "El campo 'sede' es obligatorio para procesar el pago."
+            })
+
         # --- Verificar que el pedido exista y pertenezca al usuario ---
         tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
-        resultado = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
+        resultado = tabla_pedidos.get_item(Key={"tenant_id": tenant_id, "pedido_id": pedido_id})
         pedido = resultado.get("Item")
 
         if not pedido:
@@ -78,7 +84,7 @@ def handler(event, context):
 
         # --- Actualizar pedido a PAGADO ---
         tabla_pedidos.update_item(
-            Key={"pedido_id": pedido_id},
+            Key={"tenant_id": tenant_id, "pedido_id": pedido_id},
             UpdateExpression="SET estado = :e",
             ExpressionAttributeValues={":e": "PAGADO"},
         )

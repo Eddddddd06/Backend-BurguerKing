@@ -32,18 +32,15 @@ def handler(event, context):
         pedido_id = event.get("pedido_id", "")
         paso_actual = event.get("paso_actual", "")
         task_token = event.get("task_token", "")
+        tenant_id = event.get("tenant_id", "")
 
-        if not pedido_id or not paso_actual or not task_token:
+        if not pedido_id or not paso_actual or not task_token or not tenant_id:
             print(f"[ERROR] Datos incompletos: pedido_id={pedido_id}, "
-                  f"paso_actual={paso_actual}, task_token={'presente' if task_token else 'ausente'}")
-            raise ValueError("pedido_id, paso_actual y task_token son obligatorios.")
+                  f"paso_actual={paso_actual}, task_token={'presente' if task_token else 'ausente'}, tenant_id={tenant_id}")
+            raise ValueError("pedido_id, tenant_id, paso_actual y task_token son obligatorios.")
 
-        # --- Guardar token en t_step_tokens (incluyendo tenant_id tomado desde el pedido) ---
+        # --- Guardar token en t_step_tokens ---
         tabla_tokens = dynamodb.Table(TABLA_STEP_TOKENS)
-        tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
-        pedido_res = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
-        pedido = pedido_res.get("Item", {})
-        tenant_id = pedido.get("tenant_id") or "GLOBAL"
 
         item = {
             "pedido_id": pedido_id,
@@ -59,7 +56,7 @@ def handler(event, context):
         tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
 
         tabla_pedidos.update_item(
-            Key={"pedido_id": pedido_id},
+            Key={"tenant_id": tenant_id, "pedido_id": pedido_id},
             UpdateExpression="SET estado = :e",
             ExpressionAttributeValues={":e": nuevo_estado},
         )

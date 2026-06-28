@@ -37,7 +37,7 @@ from utils import (
 _TIEMPO_ESTIMADO_MINUTOS = 25
 
 
-def _calcular_total(items: list) -> tuple:
+def _calcular_total(items: list, tenant_id: str) -> tuple:
     """
     Calcula el total leyendo precios reales desde t_productos.
     Retorna (total, items_detalle) o lanza ValueError si hay producto inválido.
@@ -53,11 +53,11 @@ def _calcular_total(items: list) -> tuple:
         if not producto_id or not isinstance(cantidad, int) or cantidad <= 0:
             raise ValueError(f"Item inválido: producto_id='{producto_id}', cantidad={cantidad}")
 
-        resultado = tabla_productos.get_item(Key={"producto_id": producto_id})
+        resultado = tabla_productos.get_item(Key={"tenant_id": tenant_id, "producto_id": producto_id})
         producto = resultado.get("Item")
 
         if not producto:
-            raise ValueError(f"Producto '{producto_id}' no encontrado.")
+            raise ValueError(f"Producto '{producto_id}' no encontrado en esta sede.")
 
         precio_unitario = Decimal(str(producto["precio"]))
         subtotal = precio_unitario * cantidad
@@ -75,16 +75,16 @@ def _calcular_total(items: list) -> tuple:
     return total, items_detalle
 
 
-def _limpiar_carrito(usuario_id: str):
-    """Elimina todos los ítems del carrito del usuario."""
+def _limpiar_carrito(usuario_id: str, tenant_id: str):
+    """Elimina todos los ítems del carrito del usuario para una sede específica."""
     tabla_carrito = dynamodb.Table(TABLA_CARRITOS)
     resultado = tabla_carrito.query(
-        KeyConditionExpression="usuario_id = :uid",
-        ExpressionAttributeValues={":uid": usuario_id},
+        KeyConditionExpression="tenant_id = :t AND begins_with(usuario_producto_id, :uid_prefix)",
+        ExpressionAttributeValues={":t": tenant_id, ":uid_prefix": f"{usuario_id}#"},
     )
     for item in resultado.get("Items", []):
         tabla_carrito.delete_item(
-            Key={"usuario_id": usuario_id, "producto_id": item["producto_id"]}
+            Key={"tenant_id": tenant_id, "usuario_producto_id": item["usuario_producto_id"]}
         )
 
 
@@ -98,11 +98,16 @@ def _handler_web(event, body):
     if not usuario_id:
         return respuesta(401, {"mensaje": "No se pudo identificar al usuario."})
 
+    # --- Determinar tenant (sede) ---
+    tenant_id = body.get("sede") or authorizer_context.get("tenant_id")
+    if not tenant_id:
+        return respuesta(400, {"mensaje": "El campo 'sede' es obligatorio para crear un pedido (o el usuario debe tener tenant en su token)."})
+
     # --- Leer items desde el carrito ---
     tabla_carrito = dynamodb.Table(TABLA_CARRITOS)
     resultado_carrito = tabla_carrito.query(
-        KeyConditionExpression="usuario_id = :uid",
-        ExpressionAttributeValues={":uid": usuario_id},
+        KeyConditionExpression="tenant_id = :t AND begins_with(usuario_producto_id, :uid_prefix)",
+        ExpressionAttributeValues={":t": tenant_id, ":uid_prefix": f"{usuario_id}#"},
     )
     items_carrito = resultado_carrito.get("Items", [])
 
@@ -118,7 +123,7 @@ def _handler_web(event, body):
 
     # --- Calcular total con precios reales desde t_productos ---
     try:
-        total, items_detalle = _calcular_total(items_para_calcular)
+        total, items_detalle = _calcular_total(items_para_calcular, tenant_id)
     except ValueError as e:
         return respuesta(400, {"mensaje": str(e)})
 
@@ -140,11 +145,6 @@ def _handler_web(event, body):
             "mensaje": "Se requiere 'direccion_entrega' y 'departamento_entrega' (o tener una dirección base registrada)."
         })
 
-    # --- Determinar tenant (sede) ---
-    tenant_id = body.get("sede") or authorizer_context.get("tenant_id")
-    if not tenant_id:
-        return respuesta(400, {"mensaje": "El campo 'sede' es obligatorio para crear un pedido (o el usuario debe tener tenant en su token)."})
-
     # --- Crear pedido ---
     pedido_id = str(uuid.uuid4())
     tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
@@ -162,7 +162,7 @@ def _handler_web(event, body):
     })
 
     # --- Limpiar carrito ---
-    _limpiar_carrito(usuario_id)
+    _limpiar_carrito(usuario_id, tenant_id)
 
     return respuesta(201, {
         "pedido_id": pedido_id,
@@ -196,7 +196,7 @@ def _handler_rappi(event, body):
 
     items_detalle = json.loads(json.dumps(items), parse_float=Decimal)
     try:
-        _, items_detalle = _calcular_total(items)
+        _, items_detalle = _calcular_total(items, tenant_id)
     except Exception as e:
         print(f"[ERROR calcular_total rappi] {e}")
 

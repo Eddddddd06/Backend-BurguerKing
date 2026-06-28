@@ -43,15 +43,20 @@ def handler(event, context):
         if not pedido_id:
             return respuesta(400, {"mensaje": "El campo 'pedido_id' es obligatorio."})
 
-        # --- Obtener tenant_id del pedido para poder consultar t_step_tokens ---
+        # --- Obtener tenant_id del authorizer ---
+        authorizer_tenant = authorizer_context.get("tenant_id")
+        if not authorizer_tenant:
+            return respuesta(403, {"mensaje": "El empleado debe tener una sede asignada (tenant_id)."})
+
+        # --- Obtener pedido ---
         tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
-        res_pedido = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
+        res_pedido = tabla_pedidos.get_item(Key={"tenant_id": authorizer_tenant, "pedido_id": pedido_id})
         pedido = res_pedido.get("Item")
 
         if not pedido:
-            return respuesta(404, {"mensaje": f"No se encontró el pedido '{pedido_id}'."})
+            return respuesta(404, {"mensaje": f"No se encontró el pedido '{pedido_id}' en su sede."})
 
-        step_tenant = pedido.get("tenant_id") or "GLOBAL"
+        step_tenant = authorizer_tenant
 
         # --- Recuperar task_token de t_step_tokens ---
         tabla_step = dynamodb.Table(TABLA_STEP_TOKENS)
@@ -67,9 +72,9 @@ def handler(event, context):
         paso_actual = step_item.get("paso_actual", "")
         step_tenant = step_item.get("tenant_id")
 
-        # Verificar que el empleado/admin opere sobre la misma sede
-        authorizer_tenant = authorizer_context.get("tenant_id")
-        if step_tenant and authorizer_tenant and step_tenant != authorizer_tenant:
+        # Verificar que el paso sea de la misma sede
+        step_tenant_db = step_item.get("tenant_id")
+        if step_tenant_db and step_tenant_db != authorizer_tenant:
             return respuesta(403, {"mensaje": "Acceso denegado. El pedido no pertenece a su sede."})
 
         if not task_token:
@@ -102,7 +107,7 @@ def handler(event, context):
             # Actualizar estado del pedido a CANCELADO y notificar
             tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
             tabla_pedidos.update_item(
-                Key={"pedido_id": pedido_id},
+                Key={"tenant_id": authorizer_tenant, "pedido_id": pedido_id},
                 UpdateExpression="SET estado = :e, notificacion = :n",
                 ExpressionAttributeValues={
                     ":e": "CANCELADO",
@@ -153,7 +158,7 @@ def handler(event, context):
         if siguiente_paso == "ENTREGADO":
             tabla_pedidos = dynamodb.Table(TABLA_PEDIDOS)
             tabla_pedidos.update_item(
-                Key={"pedido_id": pedido_id},
+                Key={"tenant_id": authorizer_tenant, "pedido_id": pedido_id},
                 UpdateExpression="SET estado = :e",
                 ExpressionAttributeValues={":e": "ENTREGADO"},
             )

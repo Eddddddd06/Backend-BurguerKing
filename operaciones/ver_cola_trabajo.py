@@ -61,7 +61,7 @@ def handler(event, context):
                 continue
 
             # Obtener detalle del pedido
-            resultado = tabla_pedidos.get_item(Key={"pedido_id": pedido_id})
+            resultado = tabla_pedidos.get_item(Key={"tenant_id": step_tenant, "pedido_id": pedido_id})
             pedido = resultado.get("Item")
 
             items_a_preparar = []
