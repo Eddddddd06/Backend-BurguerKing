@@ -284,8 +284,6 @@ resources:
         AttributeDefinitions:
           - AttributeName: token
             AttributeType: S
-          - AttributeName: tenant_id
-            AttributeType: S
         KeySchema:
           - AttributeName: token
             KeyType: HASH
